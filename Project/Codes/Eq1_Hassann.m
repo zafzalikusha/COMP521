@@ -1,0 +1,241 @@
+clear;
+close all;
+clc;
+%%
+format long;
+N = 81;
+h_values = [0.1, 0.05, 0.025, 0.0125];
+x1 = 0.0;
+x2 = 1.0;
+
+% Number of iterations to run. For calculating the mean time, I used 10 iterations.
+num_iterations = 1;    
+
+% Create cell arrays to store errors and times for each method
+errors_first_derivative = cell(length(h_values), 5);
+errors_second_derivative = cell(length(h_values), 5);
+times_first_derivative = cell(length(h_values), 5, num_iterations);
+times_second_derivative = cell(length(h_values), 5, num_iterations);
+
+% Loop over different step sizes
+for idx_h = 1:length(h_values)
+    h = h_values(idx_h);
+    
+    % Loop over different accuracy orders (O)
+    for O = 1:5
+        x = x1:h:x2;
+        f = exp(x);
+        f = f(:);
+        x = x(:);
+        
+        % Run the computations multiple times
+        for iter = 1:num_iterations
+            % Estimate first derivative and measure time
+            tic;
+            f_prime_estimate = f_derivative(1, O, f, h);
+            times_first_derivative{idx_h, O, iter} = toc;
+
+            % Estimate second derivative and measure time
+            tic;
+            f_double_prime_estimate = f_derivative(2, O, f, h);
+            times_second_derivative{idx_h, O, iter} = toc;
+        end
+
+        % Calculate exact derivatives
+        f_prime_exact_values = exp(x);
+        f_double_prime_exact_values = exp(x);
+
+        % Calculate errors
+        error_first_derivative = max(abs(f_prime_exact_values - f_prime_estimate));
+        error_second_derivative = max(abs(f_double_prime_exact_values - f_double_prime_estimate));
+
+        % Store errors in cell arrays
+        errors_first_derivative{idx_h, O} = error_first_derivative;
+        errors_second_derivative{idx_h, O} = error_second_derivative;
+    end
+end
+%% Calculate mean time for each order
+mean_times_first_derivative = zeros(length(h_values), 5);
+mean_times_second_derivative = zeros(length(h_values), 5);
+
+for idx_h = 1:length(h_values)
+    for O = 1:5
+       mean_times_first_derivative(idx_h, O) = mean(cell2mat(times_first_derivative(idx_h, O, :)));
+       mean_times_second_derivative(idx_h, O) = mean(cell2mat(times_second_derivative(idx_h, O, :)));
+    end
+end
+
+% Plot mean times for first derivative
+figure;
+subplot(2, 1, 1);
+for O = 1:5
+    plot(h_values, mean_times_first_derivative(:, O), '-o', 'DisplayName', ['Order ', num2str(O)]);
+    hold on;
+end
+title('Mean Times for First Derivative');
+xlabel('Step Size (h)');
+ylabel('Mean Time (seconds)');
+legend('Location', 'Best');
+grid on;
+
+% Plot mean times for second derivative
+subplot(2, 1, 2);
+for O = 1:5
+    plot(h_values, mean_times_second_derivative(:, O), '-o', 'DisplayName', ['Order ', num2str(O)]);
+    hold on;
+end
+title('Mean Times for Second Derivative');
+xlabel('Step Size (h)');
+ylabel('Mean Time (seconds)');
+legend('Location', 'Best');
+grid on;
+
+
+%% Plot the Errors
+% Initialize an array to store slopes
+slopes_first_derivative = zeros(5, 1);
+
+figure;
+% Plot for the first derivative
+subplot(2, 1, 1);
+
+for O = 1:5
+    max_errors1 = cellfun(@(x) mean(x), errors_first_derivative(:, O));
+    loglog(h_values, max_errors1, '-o', 'DisplayName', ['Order ', num2str(O)]);
+    hold on;
+
+    % Fit a line to the log-log plot
+    p1 = polyfit(log(h_values), log(max_errors1), 1);
+
+    % Store the slope in the array
+    slopes_first_derivative(O) = p1(1);
+
+    % Plot the fitted line
+    plot(h_values, exp(polyval(p1, log(h_values))), '--', 'DisplayName', ['Fit Order ', num2str(O)]);
+end
+
+title('Errors for First Derivative');
+xlabel('Step Size (h)');
+ylabel('Mean Error');
+legend('Location', 'Best');
+grid on;
+
+subplot(2, 1, 2);
+for O = 1:5
+    max_errors2 = cellfun(@(x) max(x), errors_second_derivative(:, O));
+    loglog(h_values, max_errors2, '-o', 'DisplayName', ['Order ', num2str(O)]);
+    hold on;
+
+    % Fit a line to the log-log plot
+    p2 = polyfit(log(h_values), log(max_errors2), 1);
+
+    % Store the slope in the array
+    slopes_second_derivative(O) = p2(1);
+
+    % Plot the fitted line
+    plot(h_values, exp(polyval(p2, log(h_values))), '--', 'DisplayName', ['Fit Order ', num2str(O)]);
+end
+
+title('Errors for Second Derivative');
+xlabel('Step Size (h)');
+ylabel('Mean Error');
+legend('Location', 'Best');
+grid on;
+%%
+function Diff_fun = f_derivative(m, O, f, h)
+
+n = m + O;
+C = Coeff(m, O, h);
+Bickley_scale = h^m * factorial(n-1) / factorial(m);
+Bickley_coeff = C * Bickley_scale;
+Bickley_coeff = int64(Bickley_coeff);
+
+% Modifying the numerical stencil for a unified accuracy
+if (mod(m, 2) == 0 && mod(O, 2) ~= 0)
+    np = n + 1;
+    j = np / 2;
+    for i = 1:j - 1
+        coef_u(i, :) = [C(i, :) 0];
+    end
+
+    coef_m(1, :) = [0 C(j - 1, :)];
+    coef_m(2, :) = [C(j + 1, :) 0];
+
+    for i = j + 2:np
+        coef_l(i - j - 1, :) = [0 C(i - 1, :)];
+    end
+
+    C = [coef_u; coef_m; coef_l];
+
+else
+    np = n;
+end
+
+% Generating the derivative over the real domain of N nodes
+[N b] = size(f);
+
+if N < np
+    error('The size of the given data should be greater than or equal to %d. \n\t Try using larger set of data or decrease the accuracy order.', np);
+end
+
+if mod(np, 2) == 0
+    j = np / 2;
+else
+    j = (np + 1) / 2;
+end
+
+U = [C(1:j - 1, :) zeros(j - 1, N - np)];
+L = [zeros(np - j, N - np) C(j + 1:np, :)];
+k = C(j, :);
+M = zeros(N - np + 1, N);
+
+for i = 1:N - np + 1
+    for j = 1:N
+        if i == j
+            M(i, j:j + np - 1) = k;
+        end
+    end
+end
+
+coef = [U; M; L];
+Diff_fun = coef * f;
+end
+
+function C = Coeff(m, O, h)
+
+n = m + O;
+k = [1:n];
+k = k(:);
+
+for i = 1:n
+    v = k - i;
+    sigma = Sig(v, n);
+
+    for l = 1:n
+        C(i, l) = ((-1)^(l - m - 1) * factorial(m) / (factorial(l - 1) * factorial(n - l) * h^m)) * sigma(n - m, l);
+    end
+end
+end
+
+function S = Sig(v, n)
+
+S = ones(n, n);
+s = S;
+
+for k = 1:n
+    vv = v;
+    vv(k) = v(1);
+
+    for i = 2:n
+        s(i, i) = s(i - 1, i - 1) * vv(i);
+
+        if i > 2
+            for j = i - 1:-1:2
+                s(j, i) = s(j - 1, i - 1) * vv(i) + s(j, i - 1);
+            end
+        end
+    end
+
+S(:, k) = s(:, n);
+end
+end
